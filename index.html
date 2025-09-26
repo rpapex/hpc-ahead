@@ -398,5 +398,31 @@ if ('serviceWorker' in navigator) {
   });
 }
 </script>
+<script>
+// === Persistenza chiave ORS in localStorage ===
+
+// ricarica la chiave salvata
+document.addEventListener("DOMContentLoaded", () => {
+  const savedKey = localStorage.getItem("ors_api_key");
+  if (savedKey) {
+    const el = document.getElementById("orsKey");
+    if (el && !el.value) el.value = savedKey;
+  }
+});
+
+// salva chiave quando si clicca "Trova HPC" e quando cambia il campo
+function saveOrsKey(){
+  const el = document.getElementById("orsKey");
+  if (!el) return;
+  const key = el.value.trim();
+  if (key) localStorage.setItem("ors_api_key", key);
+}
+document.getElementById("runBtn")?.addEventListener("click", saveOrsKey);
+document.getElementById("orsKey")?.addEventListener("change", saveOrsKey);
+
+// (facoltativo) funzione per cancellare la chiave salvata:
+// localStorage.removeItem("ors_api_key");
+</script>
+
 </body>
 </html>
