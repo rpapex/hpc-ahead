@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>HPC Ahead – Route Helper</title>
+<style>
+  :root { --bg:#0b0f14; --card:#121821; --muted:#9bb0c3; --fg:#eaf0f6; --acc:#4aa3ff; }
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--fg);font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;}
+  .wrap{max-width:980px;margin:24px auto;padding:16px;}
+  h1{font-size:1.2rem;font-weight:700;margin:0 0 12px}
+  .card{background:var(--card);border-radius:16px;padding:16px;margin-bottom:16px;box-shadow:0 6px 20px rgba(0,0,0,.25)}
+  label{display:block;font-size:.9rem;color:var(--muted);margin:8px 0 4px}
+  input,select,button,textarea{width:100%;padding:10px 12px;border-radius:12px;border:1px solid #223043;background:#0e141c;color:var(--fg);outline:none}
+  input::placeholder{color:#6e7f91}
+  .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+  .btn{background:var(--acc);border:none;color:white;font-weight:700;cursor:pointer}
+  .btn:disabled{opacity:.6;cursor:default}
+  .muted{color:var(--muted)}
+  .pill{display:inline-block;padding:2px 10px;border-radius:999px;background:#0f2236;color:#b5d8ff;border:1px solid #203a57;font-size:.82rem;margin-left:6px}
+  .list{display:flex;flex-direction:column;gap:10px;margin-top:10px}
+  .item{background:#0e141c;border:1px solid #203245;border-radius:14px;padding:12px}
+  .flex{display:flex;align-items:center;justify-content:space-between;gap:8px}
+  .small{font-size:.9rem}
+  .mono{font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace}
+  details{background:#0e141c;border:1px solid #203245;border-radius:12px;padding:8px 10px}
+  summary{cursor:pointer;color:#cfe5ff;font-weight:600}
+  .ok{color:#8bd17c}.warn{color:#ffd36b}.bad{color:#ff7a7a}
+</style>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#0b0f14">
+</head>
+<body>
+<div class="wrap">
+  <h1>⚡️ HPC Ahead – suggeritore di colonnine</h1>
+  <div class="card">
+    <p class="muted small">Trova solo <b>HPC</b> autostradali (o adiacenti) nella <b>tua direzione di marcia</b>. Nessuna mappa, solo una lista ordinata.</p>
+    <div class="row">
+      <div>
+        <label>OpenRouteService API Key</label>
+        <input id="orsKey" placeholder="Inserisci la tua ORS API key" />
+      </div>
+      <div>
+        <label>Modalità</label>
+        <select id="mode">
+          <option value="gps">Usa GPS come Punto A (consigliato)</option>
+          <option value="manual">Inserisci A e B manualmente</option>
+        </select>
+      </div>
+    </div>
+    <div id="manualAB" style="display:none" class="row">
+      <div><label>Punto A (lat,lon)</label><input id="alatlon" placeholder="es. 41.9028,12.4964"></div>
+      <div><label>Punto B (lat,lon o indirizzo)</label><input id="blatlon" placeholder="es. 40.8518,14.2681 oppure 'Napoli, IT'"></div>
+    </div>
+    <div class="row3">
+      <div><label>Raggio ricerca (km)</label><input id="searchRadiusKm" type="number" min="1" max="20" value="5"></div>
+      <div><label>Buffer autostrada (km)</label><input id="bufferMwKm" type="number" min="1" max="10" value="2"></div>
+      <div><label>Potenza minima (kW)</label><input id="minKw" type="number" min="50" max="400" value="150"></div>
+    </div>
+    <div class="row3">
+      <div><label>Passo campionamento lungo rotta (km)</label><input id="stepKm" type="number" min="5" max="100" value="30"></div>
+      <div><label>Filtro “davanti” (m)</label><input id="aheadDeltaM" type="number" min="0" max="5000" value="300"></div>
+      <div><label>Solo CCS?</label>
+        <select id="onlyCCS">
+          <option value="yes">Sì</option>
+          <option value="no">No</option>
+        </select>
+      </div>
+    </div>
+    <details style="margin-top:8px">
+      <summary>Opzioni TeslaMate (facoltative)</summary>
+      <div class="row">
+        <div><label>Autonomia stimata (km)</label><input id="estRangeKm" type="number" placeholder="es. 180"></div>
+        <div><label>Margine sicurezza (%)</label><input id="safetyPct" type="number" value="85"></div>
+      </div>
+      <p class="muted small">Se compili "Autonomia stimata", mostreremo solo HPC entro quel raggio lungo la rotta (con margine di sicurezza).</p>
+    </details>
+    <div style="margin-top:12px" class="row">
+      <button class="btn" id="runBtn">Trova HPC davanti a me</button>
+      <button id="useGpsBtn">Test GPS adesso</button>
+    </div>
+    <p id="status" class="muted small"></p>
+  </div>
+
+  <div class="card">
+    <div class="flex"><h2 style="margin:0">Risultati</h2><span id="count" class="pill">0</span></div>
+    <div id="results" class="list"></div>
+  </div>
+
+  <div class="card">
+    <h3 style="margin:0 0 6px">Note</h3>
+    <ul class="muted">
+      <li>Serve una <b>ORS API key</b> (gratuita) per ottenere la rotta. Inseriscila in alto.</li>
+      <li>Open Charge Map non richiede chiave; filtriamo per DC e potenza minima. Puoi includere/escludere CCS.</li>
+      <li>Per far girare la pagina in locale usa un server statico (es.: <span class="mono">python -m http.server 8000</span>) per evitare limiti del browser sui file.</li>
+    </ul>
+  </div>
+</div>
+
+<script>
+// ---------- Utilities geodesiche ----------
+function toRad(x){return x*Math.PI/180}
+function haversineMeters(a,b){
+  const R=6371000; const dLat=toRad(b.lat-a.lat); const dLon=toRad(b.lon-a.lon);
+  const la1=toRad(a.lat); const la2=toRad(b.lat);
+  const sinDlat=Math.sin(dLat/2), sinDlon=Math.sin(dLon/2);
+  const h=sinDlat*sinDlat + Math.cos(la1)*Math.cos(la2)*sinDlon*sinDlon;
+  return 2*R*Math.asin(Math.sqrt(h));
+}
+// planar projection around ref latitude for segment computations
+function toXY(q, refLat){
+  const R=6371000; 
+  return {
+    x: toRad(q.lon) * R * Math.cos(toRad(refLat)),
+    y: toRad(q.lat) * R
+  };
+}
+function distancePointToSegmentMeters(p,a,b){
+  const refLat=p.lat;
+  const P=toXY(p,refLat), A=toXY(a,refLat), B=toXY(b,refLat);
+  const vx=B.x-A.x, vy=B.y-A.y;
+  const wx=P.x-A.x, wy=P.y-A.y;
+  const c1=vx*wx + vy*wy;
+  const c2=vx*vx + vy*vy;
+  const t=(c2<=0?0:(c1/c2));
+  const tt=Math.max(0,Math.min(1,t));
+  const projx=A.x+tt*vx, projy=A.y+tt*vy;
+  const dx=P.x-projx, dy=P.y-projy;
+  return Math.hypot(dx,dy);
+}
+function distanceToPolylineMeters(p, poly){
+  let best=Infinity;
+  for(let i=0;i<poly.length-1;i++){
+    const d=distancePointToSegmentMeters(p, poly[i], poly[i+1]);
+    if(d<best) best=d;
+  }
+  return best;
+}
+function alongPosition(p, poly){
+  // returns cumulative meters of closest projection along polyline (approx.)
+  let bestDist=Infinity, bestCum=0;
+  let cum=0;
+  for(let i=0;i<poly.length-1;i++){
+    const a=poly[i], b=poly[i+1];
+    const segLen=haversineMeters(a,b);
+    const d=distancePointToSegmentMeters(p,a,b);
+    if(d<bestDist){
+      bestDist=d;
+      // rough t via nearest endpoint vs segment length as approximation
+      // better would compute true t; we recompute using XY:
+      const refLat=p.lat;
+      const P=toXY(p,refLat), A=toXY(a,refLat), B=toXY(b,refLat);
+      const vx=B.x-A.x, vy=B.y-A.y;
+      const wx=P.x-A.x, wy=P.y-A.y;
+      const c1=vx*wx + vy*wy;
+      const c2=vx*vx + vy*vy;
+      const t=(c2<=0?0:(c1/c2));
+      const tt=Math.max(0,Math.min(1,t));
+      bestCum = cum + tt*segLen;
+    }
+    cum += segLen;
+  }
+  return {cumMeters: bestCum}
+}
+
+// sample points along a polyline every stepKm
+function sampleAlong(poly, stepKm){
+  const pts=[poly[0]];
+  let acc=0;
+  for(let i=0;i<poly.length-1;i++){
+    const a=poly[i], b=poly[i+1];
+    const seg=haversineMeters(a,b)/1000;
+    let remain=seg;
+    while(acc+remain >= stepKm){
+      const need=stepKm-acc;
+      const t=need/seg;
+      const lat=a.lat + (b.lat-a.lat)*t;
+      const lon=a.lon + (b.lon-a.lon)*t;
+      pts.push({lat,lon});
+      remain -= need;
+      acc=0;
+    }
+    acc += remain;
+  }
+  pts.push(poly[poly.length-1]);
+  return pts;
+}
+
+// deduplicate by lat/lon rounded & name
+function dedupPOI(pois){
+  const seen=new Set(); const out=[];
+  for(const p of pois){
+    const key = `${p.name}|${p.operator}|${p.lat.toFixed(5)},${p.lon.toFixed(5)}|${p.powerKw||0}`;
+    if(!seen.has(key)){ seen.add(key); out.push(p); }
+  }
+  return out;
+}
+
+// ---------- APIs ----------
+async function orsRoute(orsKey, A, B){
+  const body = { coordinates: [[A.lon, A.lat],[B.lon,B.lat]], preference:"fastest" };
+  const r = await fetch("https://api.openrouteservice.org/v2/directions/driving-car/geojson", {
+    method:"POST",
+    headers:{ "Authorization": orsKey, "Content-Type":"application/json" },
+    body: JSON.stringify(body)
+  });
+  if(!r.ok) throw new Error("ORS route error "+r.status);
+  const geo = await r.json();
+  const coords = geo.features[0].geometry.coordinates.map(([lon,lat])=>({lat,lon}));
+  return coords;
+}
+
+// simple geocode using ORS if string not lat,lon
+async function orsGeocode(orsKey, q){
+  if(/^-?\d+(\.\d+)?\s*,\s*-?\d+(\.\d+)?$/.test(q)){
+    const [lat,lon]=q.split(",").map(s=>parseFloat(s.trim()));
+    return {lat,lon};
+  }
+  const url = "https://api.openrouteservice.org/geocode/search?text="+encodeURIComponent(q);
+  const r= await fetch(url, {headers:{ "Authorization": orsKey }});
+  if(!r.ok) throw new Error("Geocode error");
+  const j= await r.json();
+  if(!j.features || !j.features.length) throw new Error("Nessun risultato geocoding");
+  const c = j.features[0].geometry.coordinates;
+  return {lon:c[0], lat:c[1]};
+}
+
+// Open Charge Map query around a point
+async function ocmAround(lat, lon, radiusKm, minKw, onlyCCS){
+  const params = new URLSearchParams({
+    output:"json",
+    maxresults:"100",
+    compact:"true",
+    latitude:String(lat),
+    longitude:String(lon),
+    distance:String(radiusKm),
+    distanceunit:"KM",
+    levelid:"3",           // DC
+    minpowerkw:String(minKw)
+  });
+  if(onlyCCS==="yes"){
+    // Common CCS ids in OCM: 33 (CCS/SAE Combo), 32 (CCS/Combo Type 1), 27(Type 2)
+    // We'll include 33 and 32. (Note: OCM taxonomy varies by region; this is a best-effort.)
+    params.append("connectiontypeid","32");
+    params.append("connectiontypeid","33");
+  }
+  const url = "https://api.openchargemap.io/v3/poi/?"+params.toString();
+  const r = await fetch(url, {headers:{ "X-API-Key":"OCM-Client" }});
+  if(!r.ok) throw new Error("OCM error "+r.status);
+  const arr = await r.json();
+  return arr.map(e=>{
+    const conn = (e.Connections||[]).reduce((m,c)=> Math.max(m, c.PowerKW||0), 0);
+    const name = e.AddressInfo?.Title || "Senza nome";
+    const operator = e.OperatorInfo?.Title || "N/D";
+    return {
+      name, operator,
+      lat: e.AddressInfo?.Latitude, lon: e.AddressInfo?.Longitude,
+      powerKw: conn,
+      url: e.AddressInfo?.RelatedURL || e.DataProvider?.WebsiteURL || null
+    };
+  });
+}
+
+// ---------- Main logic ----------
+async function findHPC(){
+  const status = document.getElementById("status");
+  const results = document.getElementById("results");
+  const count = document.getElementById("count");
+  results.innerHTML=""; count.textContent="0";
+  const orsKey = document.getElementById("orsKey").value.trim();
+  if(!orsKey){ status.textContent="Inserisci la ORS API key."; return; }
+
+  const mode = document.getElementById("mode").value;
+  const searchRadiusKm = Number(document.getElementById("searchRadiusKm").value||5);
+  const bufferMwKm = Number(document.getElementById("bufferMwKm").value||2);
+  const minKw = Number(document.getElementById("minKw").value||150);
+  const stepKm = Number(document.getElementById("stepKm").value||30);
+  const aheadDeltaM = Number(document.getElementById("aheadDeltaM").value||300);
+  const onlyCCS = document.getElementById("onlyCCS").value;
+  const estRangeKm = Number(document.getElementById("estRangeKm").value||0);
+  const safetyPct = Number(document.getElementById("safetyPct").value||85);
+
+  let A=null, B=null, userPos=null;
+  try{
+    if(mode==="gps"){
+      userPos = await new Promise((resolve,reject)=>{
+        navigator.geolocation.getCurrentPosition(p=>resolve({lat:p.coords.latitude, lon:p.coords.longitude}), reject, {enableHighAccuracy:true, timeout:10000});
+      });
+      A = userPos;
+      const bInput = document.getElementById("blatlon").value.trim();
+      if(!bInput){ status.textContent="Inserisci Punto B (lat,lon o indirizzo) anche in modalità GPS."; return; }
+      B = await orsGeocode(orsKey, bInput);
+    } else {
+      const aInput = document.getElementById("alatlon").value.trim();
+      const bInput = document.getElementById("blatlon").value.trim();
+      if(!aInput || !bInput){ status.textContent="Inserisci A e B."; return; }
+      A = await orsGeocode(orsKey, aInput);
+      B = await orsGeocode(orsKey, bInput);
+      userPos = A; // user starts at A
+    }
+  }catch(e){
+    status.textContent = "Errore posizione/geocoding: " + e.message;
+    return;
+  }
+
+  status.textContent="Calcolo rotta...";
+  let route;
+  try{
+    route = await orsRoute(orsKey, A, B);
+  }catch(e){
+    status.textContent="Errore rotta: "+e.message; return;
+  }
+
+  // Campiona lungo rotta e interroga OCM a finestre
+  status.textContent="Ricerca colonnine lungo il corridoio...";
+  const samples = sampleAlong(route, stepKm);
+  const all=[];
+  for(const p of samples){
+    try{
+      const got = await ocmAround(p.lat, p.lon, searchRadiusKm, minKw, onlyCCS);
+      all.push(...got);
+      status.textContent = `Ricerca... ${all.length} trovate`;
+      await new Promise(r=>setTimeout(r, 200)); // gentle pacing
+    }catch(e){
+      console.warn(e);
+    }
+  }
+  let pois = dedupPOI(all);
+
+  // Filtri: vicino all'autostrada (qui usiamo la rotta stessa come proxy) + davanti
+  const maxDistToMwMeters = bufferMwKm*1000;
+  const userAlong = alongPosition(userPos, route).cumMeters;
+  pois = pois.map(p=>{
+    const dToMw = distanceToPolylineMeters({lat:p.lat, lon:p.lon}, route);
+    const poiAlong = alongPosition({lat:p.lat, lon:p.lon}, route).cumMeters;
+    const alongDiff = poiAlong - userAlong;
+    return {...p, dToMw, poiAlong, alongDiff};
+  }).filter(p=> p.dToMw <= maxDistToMwMeters && p.alongDiff > aheadDeltaM);
+
+  // Optional: autonomia stimata
+  let rangeCutKm = null;
+  if(estRangeKm>0){
+    rangeCutKm = estRangeKm * (safetyPct/100);
+    pois = pois.filter(p=> (p.alongDiff/1000) <= rangeCutKm );
+  }
+
+  // Ordina: più vicino avanti + potenza
+  pois.sort((a,b)=> (a.alongDiff - b.alongDiff) || ((b.powerKw||0) - (a.powerKw||0)) );
+
+  // Render
+  count.textContent = String(pois.length);
+  if(pois.length===0){
+    results.innerHTML = `<div class="item">Nessuna HPC trovata che soddisfi i filtri.</div>`;
+  } else {
+    results.innerHTML = pois.map(p=>{
+      const kmAhead = (p.alongDiff/1000).toFixed(1);
+      const dev = (p.dToMw/1000).toFixed(2);
+      const pow = p.powerKw? `${p.powerKw} kW` : "N/D";
+      const reach = (rangeCutKm!=null) ? ( (p.alongDiff/1000)<=rangeCutKm ? '<span class="ok">• raggiungibile</span>' : '<span class="bad">• fuori autonomia</span>') : '';
+      const link = p.url ? ` — <a href="${p.url}" target="_blank" rel="noopener">link</a>` : "";
+      return `<div class="item">
+        <div class="flex"><strong>${p.name}</strong><span class="pill">${pow}</span></div>
+        <div class="small muted">${p.operator}${link}</div>
+        <div class="small">Avanti di <b>${kmAhead} km</b> • Deviazione dall'autostrada ~ <b>${dev} km</b> ${reach}</div>
+        <div class="small mono muted">lat:${p.lat.toFixed(5)} lon:${p.lon.toFixed(5)}</div>
+      </div>`;
+    }).join("");
+  }
+  status.textContent="Fatto.";
+}
+
+// ---------- UI wiring ----------
+document.getElementById("mode").addEventListener("change", e=>{
+  const manual = e.target.value==="manual";
+  document.getElementById("manualAB").style.display = manual ? "grid":"none";
+});
+document.getElementById("useGpsBtn").addEventListener("click", async ()=>{
+  const status = document.getElementById("status");
+  try{
+    const pos = await new Promise((resolve,reject)=>{
+      navigator.geolocation.getCurrentPosition(p=>resolve({lat:p.coords.latitude, lon:p.coords.longitude}), reject, {enableHighAccuracy:true, timeout:10000});
+    });
+    status.textContent = `GPS: lat ${pos.lat.toFixed(5)}, lon ${pos.lon.toFixed(5)}`;
+  }catch(e){
+    status.textContent = "Errore GPS: " + e.message;
+  }
+});
+document.getElementById("runBtn").addEventListener("click", ()=>{
+  document.getElementById("runBtn").disabled = true;
+  findHPC().finally(()=> document.getElementById("runBtn").disabled=false);
+});
+</script>
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', ()=>{
+    navigator.serviceWorker.register('service-worker.js').catch(console.error);
+  });
+}
+</script>
+</body>
+</html>
